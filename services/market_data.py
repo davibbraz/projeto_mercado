@@ -9,9 +9,15 @@ def formatar_codigo_acao(codigo: str) -> str:
 
     Exemplo:
         PETR4 -> PETR4.SA
+
+    Raises:
+        ValueError: Quando o código está vazio.
     """
 
     codigo = codigo.strip().upper()
+
+    if not codigo:
+        raise ValueError("O código da ação não pode estar vazio.")
 
     if not codigo.endswith(".SA"):
         codigo = f"{codigo}.SA"
