@@ -125,3 +125,28 @@ def calcular_amplitude(dados: pd.DataFrame) -> float:
     menor_preco = obter_menor_preco_periodo(dados)
 
     return maior_preco - menor_preco
+
+
+def calcular_volume_medio(dados: pd.DataFrame) -> float:
+    """Calcula a média dos volumes negociados no período."""
+    volumes = _obter_coluna_valida(dados, "Volume")
+    return float(volumes.mean())
+
+
+def obter_volume_atual(dados: pd.DataFrame) -> float:
+    """Retorna o último volume negociado disponível."""
+    volumes = _obter_coluna_valida(dados, "Volume")
+    return float(volumes.iloc[-1])
+
+
+def calcular_variacao_volume(dados: pd.DataFrame) -> float:
+    """Compara percentualmente o volume atual com o volume médio."""
+    volume_medio = calcular_volume_medio(dados)
+    volume_atual = obter_volume_atual(dados)
+
+    if volume_medio == 0:
+        raise ValueError(
+            "O volume médio não pode ser zero para calcular a variação."
+        )
+
+    return ((volume_atual - volume_medio) / volume_medio) * 100
