@@ -150,3 +150,27 @@ def calcular_variacao_volume(dados: pd.DataFrame) -> float:
         )
 
     return ((volume_atual - volume_medio) / volume_medio) * 100
+
+
+def calcular_variacao_ultimo_pregao(dados: pd.DataFrame) -> float:
+    """Calcula a variação entre os dois últimos fechamentos disponíveis."""
+    fechamentos = _obter_coluna_valida(dados, "Close")
+
+    if len(fechamentos) < 2:
+        raise ValueError(
+            "São necessários pelo menos dois pregões "
+            "para calcular a variação."
+        )
+
+    fechamento_anterior = fechamentos.iloc[-2]
+    fechamento_atual = fechamentos.iloc[-1]
+
+    if fechamento_anterior == 0:
+        raise ValueError("O fechamento anterior não pode ser zero.")
+
+    variacao = (
+        (fechamento_atual - fechamento_anterior)
+        / fechamento_anterior
+    ) * 100
+
+    return float(variacao)
