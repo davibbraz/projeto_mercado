@@ -39,22 +39,21 @@ As tecnologias futuras não devem ser implementadas antes de serem necessárias 
 
 ## Estado atual
 
-O projeto está em sua fase inicial.
+O projeto possui um dashboard Streamlit com:
 
-Atualmente existe um módulo de dados de mercado responsável por:
-
-- receber o código de uma ação brasileira;
-- formatar códigos como `PETR4` para `PETR4.SA`;
-- consultar o histórico da ação usando `yfinance`;
-- retornar os dados em um DataFrame do pandas;
-- verificar se foram encontrados dados;
-- lançar um erro quando nenhum dado for encontrado.
+- consulta de históricos brasileiros via yfinance;
+- seleção de período e pesquisa por código;
+- atalhos fixos de ações acompanhadas;
+- cálculos de preços, médias móveis, retornos, volatilidade e volume;
+- gráficos e tabela histórica;
+- consulta preservada na sessão e cache de cinco minutos na interface;
+- tratamento independente de indicadores sem dados suficientes;
+- preservação de lacunas nos retornos e nas médias móveis;
+- testes de cálculos e testes de interface com dados simulados.
 
 Esta seção deve ser atualizada conforme novas funcionalidades forem implementadas.
 
 ## Estrutura do projeto
-
-A estrutura aproximada do projeto é:
 
 ```text
 projeto_mercado/
@@ -63,14 +62,18 @@ projeto_mercado/
 ├── requirements.txt
 ├── .gitignore
 ├── app.py
-├── src/
+├── services/
+│   ├── __init__.py
 │   └── market_data.py
-└── venv/
+├── utils/
+│   ├── __init__.py
+│   └── calculations.py
+└── tests/
+    ├── test_calculations.py
+    └── test_app.py
 ```
 
-A estrutura acima deve ser adaptada aos nomes reais dos arquivos existentes.
-
-A pasta `venv/` é local e não deve ser adicionada ao Git.
+As pastas `venv/` e `__pycache__/` são locais e não devem ser adicionadas ao Git.
 
 ## Organização desejada
 
@@ -194,10 +197,18 @@ python -m pip install -r requirements.txt
 Verificar a sintaxe dos arquivos Python:
 
 ```bash
-python -m compileall .
+python -m compileall -q app.py services utils tests
 ```
 
-Executar o dashboard, quando o arquivo `app.py` e a interface Streamlit estiverem disponíveis:
+Executar os testes com dados simulados:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Os testes de interface exigem as dependências do `requirements.txt` instaladas.
+
+Executar o dashboard:
 
 ```bash
 streamlit run app.py
@@ -247,18 +258,15 @@ Antes de uma mudança grande, recomendar a criação de um commit de segurança.
 
 ## Prioridade atual
 
-A prioridade atual é consolidar a camada de consulta de dados de mercado antes de adicionar funcionalidades mais avançadas.
+A prioridade atual é validar o dashboard com dados reais e manter sua clareza,
+confiabilidade e simplicidade. A consulta, a interface e os indicadores básicos
+já estão implementados.
 
 A evolução recomendada é:
 
-1. validar a consulta de uma ação brasileira;
-2. melhorar o tratamento de erros;
-3. criar uma interface Streamlit simples;
-4. permitir a escolha do período;
-5. exibir tabela e gráfico de preços;
-6. adicionar indicadores financeiros básicos;
-7. adicionar persistência de dados;
-8. integrar inteligência artificial;
-9. integrar automações com n8n.
+1. verificar os fluxos de consulta e os casos de dados incompletos;
+2. caso solicitado, ampliar a lista de ações acompanhadas e definir critérios
+   explícitos para comparações entre elas;
+3. avaliar persistência, IA e automações apenas quando houver necessidade concreta.
 
 O agente não deve implementar várias dessas etapas ao mesmo tempo sem solicitação explícita.

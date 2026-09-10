@@ -4,6 +4,7 @@ import pandas as pd
 def _obter_coluna_valida(
     dados: pd.DataFrame,
     nome_coluna: str,
+    preservar_ausentes: bool = False,
 ) -> pd.Series:
     """Retorna uma coluna válida para os cálculos financeiros."""
     if dados.empty:
@@ -14,19 +15,23 @@ def _obter_coluna_valida(
             f"A coluna '{nome_coluna}' não foi encontrada nos dados."
         )
 
-    valores = dados[nome_coluna].dropna()
+    valores = pd.to_numeric(dados[nome_coluna], errors="coerce").replace(
+        [float("inf"), float("-inf")], float("nan")
+    )
 
-    if valores.empty:
+    if valores.isna().all():
         raise ValueError(
             f"A coluna '{nome_coluna}' não possui valores válidos."
         )
 
-    return valores
+    return valores if preservar_ausentes else valores.dropna()
 
 
 def calcular_variacao_percentual(dados: pd.DataFrame) -> float:
     """Calcula a variação percentual entre o primeiro e o último fechamento."""
     fechamentos = _obter_coluna_valida(dados, "Close")
+    if len(fechamentos) < 2:
+        raise ValueError("São necessários dois fechamentos para a variação.")
     preco_inicial = fechamentos.iloc[0]
     preco_final = fechamentos.iloc[-1]
 
@@ -39,8 +44,10 @@ def calcular_variacao_percentual(dados: pd.DataFrame) -> float:
 
 
 def obter_preco_atual(dados: pd.DataFrame) -> float:
-    """Retorna o último preço de fechamento disponível."""
-    fechamentos = _obter_coluna_valida(dados, "Close")
+    """Retorna o fechamento do último registro, sem recuar sobre lacunas."""
+    fechamentos = _obter_coluna_valida(dados, "Close", preservar_ausentes=True)
+    if pd.isna(fechamentos.iloc[-1]):
+        raise ValueError("O último registro não possui preço disponível.")
     return float(fechamentos.iloc[-1])
 
 
@@ -70,8 +77,8 @@ def calcular_media_movel_simples(
     if not isinstance(janela, int) or isinstance(janela, bool) or janela <= 0:
         raise ValueError("A janela da média móvel deve ser um inteiro positivo.")
 
-    fechamentos = _obter_coluna_valida(dados, "Close")
-    return fechamentos.rolling(window=janela).mean()
+    fechamentos = _obter_coluna_valida(dados, "Close", preservar_ausentes=True)
+    return fechamentos.rolling(window=janela, min_periods=janela).mean()
 
 
 def adicionar_media_movel(
@@ -88,8 +95,12 @@ def adicionar_media_movel(
 
 
 def calcular_retornos_diarios(dados: pd.DataFrame) -> pd.Series:
-    """Calcula a variação percentual do fechamento entre dias consecutivos."""
-    fechamentos = _obter_coluna_valida(dados, "Close")
+    """Calcula retornos entre registros adjacentes, preservando lacunas.
+
+    Não preenche preços ausentes nem procura um fechamento mais antigo.
+    O calendário de pregões é o fornecido pela fonte de dados.
+    """
+    fechamentos = _obter_coluna_valida(dados, "Close", preservar_ausentes=True)
 
     if len(fechamentos) < 2:
         raise ValueError(
@@ -97,18 +108,23 @@ def calcular_retornos_diarios(dados: pd.DataFrame) -> pd.Series:
             "para calcular os retornos diários."
         )
 
-    if (fechamentos.iloc[:-1] == 0).any():
+    if ((fechamentos.shift(1) == 0) & fechamentos.notna()).any():
         raise ValueError(
             "O preço do dia anterior não pode ser zero "
             "para calcular o retorno diário."
         )
 
-    return fechamentos.pct_change().dropna() * 100
+    retornos = fechamentos.pct_change(fill_method=None) * 100
+    if retornos.notna().sum() == 0:
+        raise ValueError(
+            "Não há dois fechamentos consecutivos válidos para os retornos."
+        )
+    return retornos
 
 
 def calcular_volatilidade(dados: pd.DataFrame) -> float:
     """Calcula o desvio-padrão amostral dos retornos diários percentuais."""
-    retornos_diarios = calcular_retornos_diarios(dados)
+    retornos_diarios = calcular_retornos_diarios(dados).dropna()
 
     if len(retornos_diarios) < 2:
         raise ValueError(
@@ -134,8 +150,10 @@ def calcular_volume_medio(dados: pd.DataFrame) -> float:
 
 
 def obter_volume_atual(dados: pd.DataFrame) -> float:
-    """Retorna o último volume negociado disponível."""
-    volumes = _obter_coluna_valida(dados, "Volume")
+    """Retorna o volume do último registro, sem recuar sobre lacunas."""
+    volumes = _obter_coluna_valida(dados, "Volume", preservar_ausentes=True)
+    if pd.isna(volumes.iloc[-1]):
+        raise ValueError("O último registro não possui volume disponível.")
     return float(volumes.iloc[-1])
 
 
@@ -153,8 +171,8 @@ def calcular_variacao_volume(dados: pd.DataFrame) -> float:
 
 
 def calcular_variacao_ultimo_pregao(dados: pd.DataFrame) -> float:
-    """Calcula a variação entre os dois últimos fechamentos disponíveis."""
-    fechamentos = _obter_coluna_valida(dados, "Close")
+    """Compara os dois últimos registros; o mais recente pode ser parcial."""
+    fechamentos = _obter_coluna_valida(dados, "Close", preservar_ausentes=True)
 
     if len(fechamentos) < 2:
         raise ValueError(
@@ -164,6 +182,9 @@ def calcular_variacao_ultimo_pregao(dados: pd.DataFrame) -> float:
 
     fechamento_anterior = fechamentos.iloc[-2]
     fechamento_atual = fechamentos.iloc[-1]
+
+    if fechamentos.iloc[-2:].isna().any():
+        raise ValueError("Falta fechamento em um dos dois últimos registros.")
 
     if fechamento_anterior == 0:
         raise ValueError("O fechamento anterior não pode ser zero.")
