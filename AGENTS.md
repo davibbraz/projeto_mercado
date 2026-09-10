@@ -50,6 +50,11 @@ O projeto possui um dashboard Streamlit com:
 - tratamento independente de indicadores sem dados suficientes;
 - preservação de lacunas nos retornos e nas médias móveis;
 - testes de cálculos e testes de interface com dados simulados.
+- interface escura adaptada do Figma, com menu lateral e painel de análise;
+- cartões de ações com minigráficos, atualização manual e falhas isoladas;
+- tabela de movimentos das ações carregadas, separada por data do registro;
+- indicadores existentes preservados; índices, favoritos e comparador futuros
+  apenas sinalizados, sem implementação de novas fontes ou recomendações.
 
 Esta seção deve ser atualizada conforme novas funcionalidades forem implementadas.
 
@@ -62,6 +67,12 @@ projeto_mercado/
 ├── requirements.txt
 ├── .gitignore
 ├── app.py
+├── .streamlit/
+│   └── config.toml
+├── ui/
+│   ├── __init__.py
+│   ├── dashboard.py
+│   └── styles.css
 ├── services/
 │   ├── __init__.py
 │   └── market_data.py
@@ -197,7 +208,7 @@ python -m pip install -r requirements.txt
 Verificar a sintaxe dos arquivos Python:
 
 ```bash
-python -m compileall -q app.py services utils tests
+python -m compileall -q app.py ui services utils tests
 ```
 
 Executar os testes com dados simulados:

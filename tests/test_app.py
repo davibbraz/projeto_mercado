@@ -82,7 +82,9 @@ class TestInterface(unittest.TestCase):
         self.assertEqual(valores["Volatilidade diária"], "Indisponível")
         self.assertEqual(valores["Volume médio"], "Indisponível")
         self.assertEqual(len(self.app.dataframe), 1)
-        self.assertGreater(len(self.app.get("arrow_vega_lite_chart")), 0)
+        graficos = list(self.app.get("arrow_vega_lite_chart"))
+        graficos += list(self.app.get("vega_lite_chart"))
+        self.assertGreater(len(graficos), 0)
         self.assertTrue(any("20 pregões" in item.value for item in self.app.info))
 
     def test_falha_preserva_resultado_identificado(self):
@@ -98,6 +100,56 @@ class TestInterface(unittest.TestCase):
         self.consultar("   ")
         self.busca.assert_not_called()
         self.assertTrue(any("vazio" in item.value for item in self.app.warning))
+
+    def test_atualizar_cartoes_preserva_acao_e_cache(self):
+        self.consultar("ITUB4")
+        self.app.button(key="atualizar_acoes").click().run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.app.session_state.resultado["codigo"], "ITUB4.SA")
+        self.assertEqual(self.busca.call_count, 5)
+        self.app.button(key="acao_PETR4").click().run()
+        self.assertEqual(self.busca.call_count, 5)
+        self.assertEqual(self.app.session_state.resultado["codigo"], "PETR4.SA")
+
+    def test_falha_parcial_atualizacao_preserva_cartao_anterior(self):
+        self.consultar("VALE3")
+        anterior = self.app.session_state.acoes_consultadas["VALE3.SA"]
+        st.cache_data.clear()
+
+        def buscar(codigo, periodo):
+            if codigo == "VALE3.SA":
+                raise RuntimeError("Falha simulada")
+            return dados_exemplo()
+
+        self.busca.side_effect = buscar
+        self.app.button(key="atualizar_acoes").click().run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.app.session_state.falhas_acompanhadas, ["VALE3"])
+        mantido = self.app.session_state.acoes_consultadas["VALE3.SA"]
+        self.assertEqual(mantido["consultado_em"], anterior["consultado_em"])
+        self.assertIn("MGLU3.SA", self.app.session_state.acoes_consultadas)
+
+    def test_movimentos_separam_datas_de_pregao(self):
+        self.consultar("PETR4")
+        self.busca.return_value = dados_exemplo(24)
+        self.consultar("VALE3")
+        self.assertEqual(len(self.app.exception), 0)
+        datas = self.app.selectbox(key="data_movimentos").options
+        self.assertEqual(len(datas), 2)
+        html = "".join(item.proto.body for item in self.app.get("html"))
+        tabela = html.split('<table class="market-table"')[1]
+        self.assertIn("PETR4", tabela)
+        self.assertNotIn("VALE3", tabela)
+
+    def test_preco_ausente_nao_interrompe_interface(self):
+        dados = dados_exemplo()
+        dados.loc[dados.index[-1], "Close"] = float("nan")
+        self.busca.return_value = dados
+        self.consultar()
+        valores = {m.label: m.value for m in self.app.metric}
+        self.assertEqual(valores["Último preço disponível"], "Indisponível")
+        self.assertEqual(valores["Média móvel 20"], "Indisponível")
+        self.assertEqual(len(self.app.dataframe), 1)
 
 
 if __name__ == "__main__":
