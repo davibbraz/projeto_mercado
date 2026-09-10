@@ -1,13 +1,17 @@
+from collections.abc import Callable
+from datetime import datetime, timezone
+
+import pandas as pd
 import streamlit as st
 
-from services.market_data import buscar_historico
+from services.market_data import buscar_historico, formatar_codigo_acao
 from utils.calculations import (
     adicionar_media_movel,
     calcular_amplitude,
-    calcular_media_movel_simples,
     calcular_preco_medio_fechamento,
     calcular_retornos_diarios,
     calcular_variacao_percentual,
+    calcular_variacao_ultimo_pregao,
     calcular_variacao_volume,
     calcular_volatilidade,
     calcular_volume_medio,
@@ -20,6 +24,66 @@ from utils.calculations import (
 
 PERIODOS_DISPONIVEIS = ("5d", "1mo", "3mo", "6mo", "1y", "5y")
 JANELAS_MEDIA_MOVEL = (5, 10, 20, 50)
+ACOES_ACOMPANHADAS = ("PETR4", "VALE3", "ITUB4", "BBAS3")
+TEMPO_CACHE_SEGUNDOS = 300
+
+
+@st.cache_data(ttl=TEMPO_CACHE_SEGUNDOS, max_entries=128, show_spinner=False)
+def carregar_historico(
+    codigo: str, periodo: str,
+) -> tuple[pd.DataFrame, datetime]:
+    """Reutiliza consultas recentes e preserva o horário da busca original."""
+    dados = buscar_historico(codigo, periodo)
+    return dados, datetime.now(timezone.utc)
+
+
+def solicitar_consulta(codigo: str | None = None) -> None:
+    """Registra a consulta pedida pelo campo de pesquisa ou por um atalho."""
+    if codigo is not None:
+        # Callbacks executam antes dos widgets, permitindo atualizar o campo.
+        st.session_state.codigo_acao = codigo
+    try:
+        codigo_formatado = formatar_codigo_acao(st.session_state.codigo_acao)
+    except ValueError as erro:
+        st.session_state.erro_consulta = str(erro)
+        return
+    st.session_state.consulta = (codigo_formatado, st.session_state.periodo)
+    st.session_state.consultar_pendente = True
+    st.session_state.erro_consulta = None
+
+
+def atualizar_periodo() -> None:
+    """Aplica o período à ação consultada, preservando a pesquisa em edição."""
+    consulta = st.session_state.get("consulta")
+    if consulta is not None:
+        st.session_state.consulta = (consulta[0], st.session_state.periodo)
+        st.session_state.consultar_pendente = True
+        st.session_state.erro_consulta = None
+
+
+def executar_consulta_pendente() -> None:
+    """Substitui o resultado somente depois de uma consulta bem-sucedida."""
+    if not st.session_state.pop("consultar_pendente", False):
+        return
+    codigo, periodo = st.session_state.consulta
+    try:
+        with st.spinner("Consultando histórico..."):
+            dados, consultado_em = carregar_historico(codigo, periodo)
+    except ValueError as erro:
+        st.session_state.erro_consulta = str(erro)
+    except Exception:
+        st.session_state.erro_consulta = (
+            "Não foi possível consultar os dados no momento. "
+            "Tente novamente mais tarde."
+        )
+    else:
+        st.session_state.resultado = {
+            "codigo": codigo,
+            "periodo": periodo,
+            "dados": dados,
+            "consultado_em": consultado_em,
+        }
+        st.session_state.erro_consulta = None
 
 
 def formatar_moeda(valor: float) -> str:
@@ -34,106 +98,147 @@ def formatar_volume(valor: float) -> str:
     return f"{valor:,.0f}".replace(",", ".")
 
 
-st.title("Mercado de ações brasileiras")
-st.write(
-    "Consulte preços, oscilações e volumes de uma ação negociada "
-    "na bolsa brasileira."
-)
+def formatar_percentual(valor: float) -> str:
+    """Formata um percentual em português."""
+    return f"{valor:.2f}%".replace(".", ",")
 
-codigo_acao = st.text_input(
-    "Código da ação",
-    placeholder="Exemplo: PETR4",
-)
-periodo = st.selectbox(
-    "Período",
-    options=PERIODOS_DISPONIVEIS,
-)
-janela_media = st.selectbox(
-    "Janela da média móvel",
-    options=JANELAS_MEDIA_MOVEL,
-    index=2,
-)
 
-if st.button("Consultar"):
+def exibir_indicador(
+    titulo: str,
+    calculo: Callable[[pd.DataFrame], float],
+    dados: pd.DataFrame,
+    formatador: Callable[[float], str],
+) -> None:
+    """Isola a falta de dados de um indicador sem interromper o painel."""
     try:
-        dados = buscar_historico(codigo_acao, periodo)
-
-        variacao_percentual = calcular_variacao_percentual(dados)
-        preco_atual = obter_preco_atual(dados)
-        maior_preco = obter_maior_preco_periodo(dados)
-        menor_preco = obter_menor_preco_periodo(dados)
-        preco_medio = calcular_preco_medio_fechamento(dados)
-
-        media_movel = calcular_media_movel_simples(dados, janela_media)
-        dados_com_media = adicionar_media_movel(dados, janela_media)
-        nome_media_movel = f"Media_Movel_{janela_media}"
-
-        retornos_diarios = calcular_retornos_diarios(dados)
-        volatilidade = calcular_volatilidade(dados)
-        amplitude = calcular_amplitude(dados)
-
-        volume_medio = calcular_volume_medio(dados)
-        volume_atual = obter_volume_atual(dados)
-        variacao_volume = calcular_variacao_volume(dados)
+        valor = calculo(dados)
     except ValueError as erro:
-        st.warning(str(erro))
-    except Exception:
-        st.error(
-            "Não foi possível consultar os dados no momento. "
-            "Tente novamente mais tarde."
-        )
+        st.metric(titulo, "Indisponível")
+        st.caption(str(erro))
     else:
-        st.subheader("Resumo de preços")
-        coluna_preco, coluna_maior, coluna_menor, coluna_media = st.columns(4)
-        coluna_preco.metric(
-            "Preço atual",
-            formatar_moeda(preco_atual),
-            f"{variacao_percentual:.2f}% no período",
-        )
-        coluna_maior.metric("Maior preço", formatar_moeda(maior_preco))
-        coluna_menor.metric("Menor preço", formatar_moeda(menor_preco))
-        coluna_media.metric("Fechamento médio", formatar_moeda(preco_medio))
+        st.metric(titulo, formatador(valor))
 
-        st.subheader("Risco e oscilação")
-        coluna_volatilidade, coluna_amplitude = st.columns(2)
-        coluna_volatilidade.metric(
-            "Volatilidade diária",
-            f"{volatilidade:.2f}%",
-        )
-        coluna_amplitude.metric(
-            "Amplitude do período",
-            formatar_moeda(amplitude),
+
+def exibir_resumo(dados: pd.DataFrame) -> None:
+    """Apresenta os indicadores existentes e a variação do último registro."""
+    grupos = (
+        ("Resumo de preços", (
+            ("Último preço disponível", obter_preco_atual, formatar_moeda),
+            ("Maior preço", obter_maior_preco_periodo, formatar_moeda),
+            ("Menor preço", obter_menor_preco_periodo, formatar_moeda),
+            ("Fechamento médio", calcular_preco_medio_fechamento, formatar_moeda),
+        )),
+        ("Variações de preço", (
+            ("Variação no período", calcular_variacao_percentual, formatar_percentual),
+            (
+                "Último registro × anterior",
+                calcular_variacao_ultimo_pregao,
+                formatar_percentual,
+            ),
+        )),
+        ("Risco e oscilação", (
+            ("Volatilidade diária", calcular_volatilidade, formatar_percentual),
+            ("Amplitude do período", calcular_amplitude, formatar_moeda),
+        )),
+        ("Volume", (
+            ("Volume do último registro", obter_volume_atual, formatar_volume),
+            ("Volume médio", calcular_volume_medio, formatar_volume),
+            ("Variação do volume", calcular_variacao_volume, formatar_percentual),
+        )),
+    )
+    for titulo_grupo, indicadores in grupos:
+        st.subheader(titulo_grupo)
+        for coluna, (titulo, calculo, formatador) in zip(
+            st.columns(len(indicadores)), indicadores
+        ):
+            with coluna:
+                exibir_indicador(titulo, calculo, dados, formatador)
+
+
+def exibir_graficos(dados: pd.DataFrame, janela: int) -> None:
+    """Exibe gráficos disponíveis e explica a falta de média móvel."""
+    st.subheader("Preço de fechamento e média móvel")
+    dados_com_media = dados
+    try:
+        dados_com_media = adicionar_media_movel(dados, janela)
+    except ValueError as erro:
+        st.info(str(erro))
+    else:
+        nome_media = f"Media_Movel_{janela}"
+        if dados_com_media[nome_media].notna().any():
+            st.line_chart(dados_com_media[["Close", nome_media]])
+        else:
+            st.info(
+                f"A média móvel de {janela} pregões exige {janela} "
+                "fechamentos consecutivos válidos. Aumente o período "
+                "ou escolha uma janela menor."
+            )
+            st.line_chart(dados_com_media[["Close"]])
+
+    st.subheader("Retornos diários")
+    try:
+        retornos = calcular_retornos_diarios(dados)
+    except ValueError as erro:
+        st.info(str(erro))
+    else:
+        st.line_chart(retornos.rename("Retorno diário (%)"))
+
+    st.subheader("Histórico de preços")
+    st.dataframe(dados_com_media, width="stretch")
+
+
+def main() -> None:
+    """Monta o dashboard e mantém o último resultado durante as interações."""
+    st.title("Mercado de ações brasileiras")
+    st.write("Consulte preços, oscilações e volumes de ações da bolsa brasileira.")
+    st.subheader("Ações acompanhadas")
+    st.caption("Lista fixa de atalhos. Clique em uma ação para abrir seu gráfico.")
+    for coluna, codigo in zip(st.columns(len(ACOES_ACOMPANHADAS)), ACOES_ACOMPANHADAS):
+        coluna.button(
+            codigo, key=f"acao_{codigo}", on_click=solicitar_consulta, args=(codigo,)
         )
 
-        st.subheader("Volume")
-        coluna_volume_atual, coluna_volume_medio, coluna_variacao_volume = (
-            st.columns(3)
-        )
-        coluna_volume_atual.metric(
-            "Volume atual",
-            formatar_volume(volume_atual),
-        )
-        coluna_volume_medio.metric(
-            "Volume médio",
-            formatar_volume(volume_medio),
-        )
-        coluna_variacao_volume.metric(
-            "Variação do volume",
-            f"{variacao_volume:.2f}%",
-        )
+    st.text_input("Código da ação", placeholder="Exemplo: PETR4", key="codigo_acao")
+    st.selectbox(
+        "Período", options=PERIODOS_DISPONIVEIS, index=1,
+        key="periodo", on_change=atualizar_periodo,
+    )
+    janela = st.selectbox(
+        "Janela da média móvel", options=JANELAS_MEDIA_MOVEL,
+        index=2, key="janela_media",
+    )
+    st.button("Consultar", key="consultar", on_click=solicitar_consulta)
+    executar_consulta_pendente()
 
-        st.subheader("Preço de fechamento e média móvel")
-        dados_grafico = dados[["Close"]].copy()
-        dados_grafico[nome_media_movel] = media_movel
-        st.line_chart(dados_grafico)
+    erro = st.session_state.get("erro_consulta")
+    if erro:
+        st.warning(erro)
+    resultado = st.session_state.get("resultado")
+    if resultado is None:
+        st.info("Pesquise uma ação ou selecione um dos atalhos acima.")
+        return
+    if erro:
+        st.info("Exibindo a última consulta bem-sucedida, identificada abaixo.")
 
-        st.subheader("Retornos diários")
-        st.line_chart(retornos_diarios.rename("Retorno diário (%)"))
+    dados = resultado["dados"]
+    horario_consulta = resultado["consultado_em"].strftime("%d/%m/%Y %H:%M UTC")
+    st.subheader(f"{resultado['codigo']} · período {resultado['periodo']}")
+    st.caption(
+        f"Último registro: {dados.index[-1].strftime('%d/%m/%Y')}. "
+        f"Consulta à fonte: {horario_consulta}. "
+        "O registro mais recente pode corresponder a um pregão em andamento."
+    )
+    st.caption(
+        "Consultas são reutilizadas por até 5 minutos. Clique em Consultar "
+        "após esse prazo para buscar dados novos; não há atualização automática."
+    )
+    exibir_resumo(dados)
+    exibir_graficos(dados, janela)
+    st.caption(
+        "Fonte: Yahoo Finance via yfinance. Dados informativos, sujeitos a "
+        "atrasos; não representam recomendação de investimento."
+    )
 
-        st.subheader("Histórico de preços")
-        st.dataframe(dados_com_media, width="stretch")
 
-        st.caption(
-            "Os dados e cálculos são informativos e não representam "
-            "recomendação de investimento."
-        )
+if __name__ == "__main__":
+    main()
